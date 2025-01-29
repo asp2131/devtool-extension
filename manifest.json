@@ -1,21 +1,16 @@
 {
-    "manifest_version": 3,
-    "name": "Custom Inspect Tools",
-    "version": "1.0",
-    "description": "Opens custom inspect tools for webpages",
-    "permissions": ["activeTab", "scripting"],
-    "background": {
-      "service_worker": "background.js"
-    },
-    "devtools_page": "devtools.html",
-    "content_scripts": [
-      {
-        "matches": ["<all_urls>"],
-        "css": ["content.css"],
-        "js": ["content.js"]
-      }
-    ],
-    "action": {
-      "default_title": "Custom Inspect Tools"
-    }
+  "manifest_version": 3,
+  "name": "Custom Inspect Tools",
+  "version": "1.0",
+  "description": "Opens custom inspect tools for webpages",
+  "permissions": [
+    "activeTab",
+    "scripting"
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "action": {
+    "default_title": "Show Inspect Tools"
   }
+}

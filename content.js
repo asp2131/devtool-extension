@@ -17,15 +17,17 @@ function createFloatingUI() {
   console.id = 'custom-inspect-console';
   console.innerHTML = `
     <div class="console-header">
-      <span>JavaScript Console</span>
+      <span>Browser Console</span>
       <button class="minimize-btn">_</button>
       <button class="close-btn">×</button>
     </div>
     <div class="console-body">
       <div class="console-output"></div>
-      <div class="console-input">
-        <textarea placeholder="Enter JavaScript code..."></textarea>
-        <button class="run-btn">Run</button>
+      <div class="console-filters">
+        <label><input type="checkbox" data-level="log" checked> Log</label>
+        <label><input type="checkbox" data-level="info" checked> Info</label>
+        <label><input type="checkbox" data-level="warn" checked> Warn</label>
+        <label><input type="checkbox" data-level="error" checked> Error</label>
       </div>
     </div>
   `;
@@ -51,57 +53,215 @@ function createFloatingUI() {
   document.body.appendChild(inspectPanel);
 
   initializeEventListeners();
+  interceptConsole();
 }
+
+function interceptConsole() {
+  const consoleOutput = document.querySelector('.console-output');
+  const originalConsole = {
+    log: console.log,
+    info: console.info,
+    warn: console.warn,
+    error: console.error,
+    debug: console.debug,
+    trace: console.trace
+  };
+
+  function getStackTrace() {
+    try {
+      throw new Error();
+    } catch (e) {
+      return e.stack.split('\n')
+        .slice(2) // Remove the error message and getStackTrace call
+        .map(line => line.trim())
+        .join('\n');
+    }
+  }
+
+  function formatValue(value) {
+    if (value === undefined) return 'undefined';
+    if (value === null) return 'null';
+    if (typeof value === 'function') return value.toString();
+    if (typeof value === 'object') {
+      try {
+        // Handle circular references
+        const seen = new WeakSet();
+        return JSON.stringify(value, (key, value) => {
+          if (typeof value === 'object' && value !== null) {
+            if (seen.has(value)) {
+              return '[Circular]';
+            }
+            seen.add(value);
+          }
+          return value;
+        }, 2);
+      } catch (e) {
+        return String(value);
+      }
+    }
+    return String(value);
+  }
+
+  function createConsoleEntry(level, args, stack) {
+    const entry = document.createElement('div');
+    entry.className = `console-line ${level}`;
+    
+    const timestamp = new Date().toLocaleTimeString();
+    
+    // Format each argument
+    const formattedArgs = Array.from(args).map(arg => {
+      if (arg instanceof Error) {
+        return `${arg.name}: ${arg.message}\n${arg.stack || ''}`;
+      }
+      return formatValue(arg);
+    });
+
+    // Create entry content
+    let content = formattedArgs.join(' ');
+    
+    // Add file and line info from stack if available
+    if (stack) {
+      const stackLines = stack.split('\n');
+      if (stackLines[0]) {
+        const match = stackLines[0].match(/at\s+(?:\w+\s+)?\(?(.*):(\d+):(\d+)/);
+        if (match) {
+          const [, file, line, col] = match;
+          const fileInfo = `${file.split('/').pop()}:${line}`;
+          content += `\n<span class="stack-trace">${fileInfo}</span>`;
+        }
+      }
+    }
+
+    entry.innerHTML = `
+      <span class="timestamp">${timestamp}</span>
+      <span class="content">${content}</span>
+    `;
+    
+    // Add expandable stack trace
+    if (stack && level === 'error') {
+      const stackTrace = document.createElement('div');
+      stackTrace.className = 'stack-trace hidden';
+      stackTrace.textContent = stack;
+      entry.appendChild(stackTrace);
+      
+      entry.addEventListener('click', () => {
+        stackTrace.classList.toggle('hidden');
+      });
+    }
+    
+    return entry;
+  }
+
+  // Override console methods
+  Object.keys(originalConsole).forEach(level => {
+    console[level] = (...args) => {
+      // Get stack trace before calling original
+      const stack = level === 'error' ? getStackTrace() : null;
+      
+      // Call original console method
+      originalConsole[level].apply(console, args);
+      
+      // Create and append entry
+      const entry = createConsoleEntry(level, args, stack);
+      consoleOutput.appendChild(entry);
+      
+      // Auto-scroll to bottom
+      consoleOutput.scrollTop = consoleOutput.scrollHeight;
+    };
+  });
+
+  // Add some additional styling
+  const style = document.createElement('style');
+  style.textContent = `
+    .console-line {
+      position: relative;
+      padding: 4px 8px;
+      border-bottom: 1px solid #eee;
+      font-family: monospace;
+      white-space: pre-wrap;
+    }
+    
+    .stack-trace {
+      margin-top: 4px;
+      padding: 4px 0 4px 20px;
+      color: #666;
+      font-size: 0.9em;
+    }
+    
+    .stack-trace.hidden {
+      display: none;
+    }
+    
+    .console-line.error {
+      background-color: rgba(255, 0, 0, 0.1);
+    }
+    
+    .console-line.warn {
+      background-color: rgba(255, 165, 0, 0.1);
+    }
+    
+    .console-line.info {
+      color: #2196F3;
+    }
+  `;
+  document.head.appendChild(style);
+
+  // Handle existing console filters
+  document.querySelectorAll('.console-filters input').forEach(checkbox => {
+    checkbox.addEventListener('change', (e) => {
+      const level = e.target.dataset.level;
+      const show = e.target.checked;
+      document.querySelectorAll(`.console-line.${level}`).forEach(entry => {
+        entry.style.display = show ? 'block' : 'none';
+      });
+    });
+  });
+
+  // Intercept window errors
+  window.addEventListener('error', function(event) {
+    const entry = createConsoleEntry('error', [event.error || event.message], event.error?.stack);
+    consoleOutput.appendChild(entry);
+    consoleOutput.scrollTop = consoleOutput.scrollHeight;
+  });
+
+  // Intercept unhandled promise rejections
+  window.addEventListener('unhandledrejection', function(event) {
+    const entry = createConsoleEntry('error', ['Unhandled Promise Rejection:', event.reason], event.reason?.stack);
+    consoleOutput.appendChild(entry);
+    consoleOutput.scrollTop = consoleOutput.scrollHeight;
+  });
+}
+
+document.addEventListener('console-message', function(event) {
+  const msg = event.detail;
+  const entry = createConsoleEntry(msg.level, msg.args, msg.stack);
+  consoleOutput.appendChild(entry);
+  consoleOutput.scrollTop = consoleOutput.scrollHeight;
+});
 
 function initializeEventListeners() {
   const fab = document.getElementById('custom-inspect-fab');
   const console = document.getElementById('custom-inspect-console');
   const inspectPanel = document.getElementById('custom-inspect-panel');
 
-  // FAB menu toggle
   fab.querySelector('.fab-icon').addEventListener('click', () => {
     fab.classList.toggle('active');
   });
 
-  // Console button
   document.getElementById('console-btn').addEventListener('click', () => {
     console.style.display = 'block';
     fab.classList.remove('active');
   });
 
-  // Inspect button
   document.getElementById('inspect-btn').addEventListener('click', () => {
     inspectPanel.style.display = 'block';
     fab.classList.remove('active');
     enableInspectMode();
   });
 
-  // Make console draggable
   makeDraggable(console);
   makeDraggable(inspectPanel);
 
-  // Console functionality
-  const runBtn = console.querySelector('.run-btn');
-  const textarea = console.querySelector('textarea');
-  const output = console.querySelector('.console-output');
-
-  runBtn.addEventListener('click', () => {
-    try {
-      const result = eval(textarea.value);
-      output.innerHTML += `<div class="console-line">
-        <span class="input">> ${textarea.value}</span>
-        <span class="output">${result}</span>
-      </div>`;
-    } catch (error) {
-      output.innerHTML += `<div class="console-line error">
-        <span class="input">> ${textarea.value}</span>
-        <span class="error">${error}</span>
-      </div>`;
-    }
-    textarea.value = '';
-  });
-
-  // Close and minimize buttons
   document.querySelectorAll('.close-btn').forEach(btn => {
     btn.addEventListener('click', () => {
       btn.closest('#custom-inspect-console, #custom-inspect-panel').style.display = 'none';
