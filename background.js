@@ -1,7 +1,41 @@
 // Listen for extension icon click
 chrome.action.onClicked.addListener(async (tab) => {
+  // First inject early console interceptor
+  await chrome.scripting.executeScript({
+    target: { tabId: tab.id },
+    func: function() {
+      // Store original console methods
+      window.__originalConsole = {
+        log: console.log,
+        info: console.info,
+        warn: console.warn,
+        error: console.error,
+        debug: console.debug,
+        trace: console.trace
+      };
+      
+      // Store messages until UI is ready
+      window.__consoleMessages = [];
+      
+      // Override console methods to store messages
+      Object.keys(window.__originalConsole).forEach(level => {
+        console[level] = (...args) => {
+          // Store message
+          window.__consoleMessages.push({
+            level,
+            args,
+            timestamp: new Date().toISOString(),
+            stack: new Error().stack
+          });
+          
+          // Call original
+          window.__originalConsole[level].apply(console, args);
+        };
+      });
+    }
+  });
 
-  // Inject the main content script and styles
+  // Then inject the main content script and styles
   await chrome.scripting.executeScript({
     target: { tabId: tab.id },
     files: ['content.js']
